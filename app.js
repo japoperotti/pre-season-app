@@ -1,7 +1,7 @@
 import * as store from "./store.js";
 import { todayISO, weekOf, effWeek, phaseFor, availableDays, mainDays, dayExercises, findExercise, programExercises, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
 
-const VERSION = "2.2.2";
+const VERSION = "2.2.3";
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -351,7 +351,7 @@ function viewWorkout() {
   const pend = e.sets.findIndex(s => !s.done);
   const last = lastFor(e, a);
   const sugg = suggestion({ ...pe, sets: e.target.sets, reps: e.target.reps }, last);
-  const howOpen = S.howOpen[e.id] ?? !last;
+  const howOpen = !!S.howOpen[e.id];
   const hasLoad = e.load !== "none";
   const segs = a.exercises.map((x, i) => { const d = x.sets.filter(s => s.done).length, t = x.sets.length || 1; return `<i class="${i === ei ? "cur" : ""}"><b style="width:${Math.round(d / t * 100)}%"></b></i>`; }).join("");
   const loadLbl = e.load === "bw+" ? "+kg" : "kg";
@@ -379,7 +379,7 @@ function viewWorkout() {
     <div class="wk-head" id="wk-swipe"><div class="txt">
       <div class="wk-kicker">${e.block === "ankle" ? "Caviglia · " : e.block === "warmup" ? "Riscaldamento · " : ""}Esercizio ${ei + 1} di ${n}</div>
       <h1 class="wk-title">${esc(e.name)}${e.mode === "home" ? '<span class="tag">a casa</span>' : ""}</h1>
-      <div class="wk-sub"><b>${e.target.sets} × ${fmtN(e.target.reps)}</b> ${unitLong(e.measure)}${e.perSide ? " per lato" : ""}${e.target.rest ? " · recupero " + fmtSec(e.target.rest) : ""}</div>
+      <div class="wk-sub"><b>${e.target.sets} × ${fmtN(e.target.reps)}</b> ${unitLong(e.measure)}${e.perSide ? " per lato" : ""}${e.target.rest ? " · recupero " + fmtSec(e.target.rest) : " · senza recupero"}</div>
       ${pe.note ? `<div class="foot" style="margin-top:6px">${esc(pe.note)}</div>` : ""}
     </div>
       <div class="wk-ring">${rings([{ v: e.sets.filter(x => x.done).length, max: e.sets.length, color: "var(--day)" }], 76)}<span><div>${e.sets.filter(x => x.done).length}/${e.sets.length}<small>SERIE</small></div></span></div>

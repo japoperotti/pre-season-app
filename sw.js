@@ -1,5 +1,5 @@
 // App shell offline: network first (3 s timeout), cache as fallback. GitHub API calls are not touched.
-const CACHE = "preseason-v2.2.2";
+const CACHE = "preseason-v2.2.3";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "store.js", "plan.js", "manifest.webmanifest", "keepawake.mp4", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {
