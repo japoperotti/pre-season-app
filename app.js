@@ -1,7 +1,7 @@
 import * as store from "./store.js";
 import { todayISO, weekOf, effWeek, phaseFor, availableDays, mainDays, dayExercises, findExercise, programExercises, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
 
-const VERSION = "2.1.0";
+const VERSION = "2.2.0";
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -32,9 +32,26 @@ const P = {
   plan: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="4" y="3.5" width="16" height="17" rx="3"/><path d="M8 8.5h8M8 12h8M8 15.5h5"/></g>',
   bolt: '<path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z" fill="currentColor"/>',
   run: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="14.5" cy="4.5" r="1.8"/><path d="M8 21l3-5.5 3 2.5 1-5M6 11l3.5-3h4l2.5 3 3 1"/><path d="M11 8l-1.5 5"/></g>',
-  heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>'
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>',
+  heartFill: '<path d="M12 20.5s-8-4.9-8-10.6A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 2.9c0 5.7-8 10.6-8 10.6z" fill="currentColor"/>',
+  flame: '<path d="M12 2.5c.6 3.2-1.6 4.8-3.1 6.8C7.6 11 7 12.6 7 14.4a5 5 0 0 0 10 0c0-2.4-1.2-4-2.4-5.3.2 1.6-.4 2.9-1.6 3.4.6-3.4-.2-6.8-1-10z" fill="currentColor"/>',
+  house: '<path d="M4 11l8-6.5 8 6.5V20a1 1 0 0 1-1 1h-4.5v-5.5h-5V21H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>',
+  clock: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></g>',
+  dumbbell: '<g fill="currentColor"><rect x="2.5" y="9" width="3" height="6" rx="1"/><rect x="5.5" y="6.5" width="3" height="11" rx="1.2"/><rect x="15.5" y="6.5" width="3" height="11" rx="1.2"/><rect x="18.5" y="9" width="3" height="6" rx="1"/><rect x="8.5" y="11" width="7" height="2" rx="1"/></g>',
+  target: '<g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/></g><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
+  timer: '<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 1.5M10 2.5h4"/></g>',
+  stack: '<g fill="currentColor"><rect x="4" y="13" width="4" height="7" rx="1.2"/><rect x="10" y="8" width="4" height="12" rx="1.2"/><rect x="16" y="4" width="4" height="16" rx="1.2"/></g>'
 };
 const icon = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+// Activity-style concentric rings: items [{v, max, color}], outermost first
+function rings(items, size = 112) {
+  const c0 = size / 2, sw = size * 0.135, gap = size * 0.02;
+  return `<svg class="rings" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${items.map((it, k) => {
+    const r = c0 - sw / 2 - k * (sw + gap), c = 2 * Math.PI * r, f = Math.min(1, it.max ? it.v / it.max : 0);
+    return `<circle cx="${c0}" cy="${c0}" r="${r}" fill="none" stroke="${it.color}" stroke-opacity=".22" stroke-width="${sw}"/>` +
+      (f > 0 ? `<circle cx="${c0}" cy="${c0}" r="${r}" fill="none" stroke="${it.color}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - f)}" transform="rotate(-90 ${c0} ${c0})"/>` : "");
+  }).join("")}</svg>`;
+}
 
 /* ---------- state ---------- */
 const S = {
@@ -138,6 +155,8 @@ function render(force) {
   if (!force && a && /INPUT|TEXTAREA/.test(a.tagName) && a.type !== "checkbox" && a.closest("#app,#sheet-root")) { S.deferred = true; return; }
   S.deferred = false;
   const app = $("#app");
+  const inWk = S.active && (S.view === "workout" || S.view === "finish");
+  document.documentElement.className = S.plan ? "d-" + (inWk ? S.active.day : S.tab === "oggi" ? currentDay() : S.tab === "scheda" && S.plan.days[S.planDay] ? S.planDay : "B") : "";
   if (!S.plan) app.innerHTML = viewSetup();
   else if (S.view === "workout" && S.active) app.innerHTML = viewWorkout();
   else if (S.view === "finish" && S.active) app.innerHTML = viewFinish();
@@ -150,6 +169,7 @@ function renderTabbar() {
   const tb = $("#tabbar");
   const show = S.plan && (S.view === "tabs" || !S.active);
   tb.classList.toggle("hidden", !show);
+  $("#edge").style.display = show ? "" : "none";
   if (!show) return;
   const tabs = [["oggi", "Oggi", "today"], ["storico", "Storico", "history"], ["scheda", "Scheda", "plan"]];
   tb.innerHTML = `<div class="in">${tabs.map(([k, l, ic]) => `<button data-act="tab" data-v="${k}" aria-selected="${S.tab === k}">${icon(ic)}<span>${l}</span></button>`).join("")}</div>`;
@@ -174,69 +194,84 @@ function viewSetup() {
 }
 
 /* ---------- Oggi ---------- */
-function weekCard() {
-  const p = S.plan, w = week(), tot = p.totalWeeks || 10, ph = phaseFor(p, w);
-  const bars = Array.from({ length: tot }, (_, i) => { const n = i + 1; return `<i class="${n < w ? "done" : n === w ? "now" : ""}" style="height:${30 + Math.round(n / tot * 70)}%"></i>`; }).join("");
-  const left = Math.max(0, tot - Math.max(0, w));
-  return `<div class="card week-card">
-    <div class="week-top">
-      <div class="week-big num">${w > tot ? "Stagione" : `${w < 1 ? 0 : w}<small> / ${tot}</small>`}</div>
-      ${ph && w <= tot ? `<span class="pill blue">${esc(ph.name)}</span>` : ""}
-    </div>
-    <div class="bars" aria-hidden="true">${bars}</div>
-    <div class="foot">${w < 1 ? "Si parte " + fmtDate(p.startDate) + ". " + esc(phaseFor(p, 1)?.note || "") : `${w > tot ? "Settimana " + w : `Settimana ${w} · ${left === 0 ? "ultima settimana" : left === 1 ? "ancora 1 settimana" : "ancora " + left + " settimane"}`}${ph ? ". " + esc(ph.note) : ""}`}</div>
-  </div>`;
-}
 function estMinutes(list) {
   return Math.round(list.reduce((a, e) => a + e.sets * ((e.measure === "sec" ? e.reps * (e.perSide ? 2 : 1) : 40) + e.rest), 0) / 60 / 5) * 5;
 }
+const currentDay = () => S.pickDay && days().includes(S.pickDay) ? S.pickDay : nextDay();
+const weekSessions = w => S.sessions.filter(s => inProgram(s) && progWeek(s) === w);
+// consecutive program weeks with every planned session done (the current one counts once done)
+function weekStreak() {
+  const w = effWeek(week());
+  const full = n => weekSessions(n).filter(s => s.type === "gym" && mainDays(S.plan, n).includes(s.day)).length >= mainDays(S.plan, n).length;
+  let n = full(w) ? w : w - 1, k = 0;
+  while (n >= 1 && full(n)) { k++; n--; }
+  return k;
+}
 function viewOggi() {
-  const p = S.plan, w = week();
-  const ds = days(), md = mainDays(p, w);
-  const day = S.pickDay && ds.includes(S.pickDay) ? S.pickDay : nextDay();
-  const list = dayExercises(p, day, { week: w, minimal: S.minimal, home: S.home });
-  const wkS = S.sessions.filter(s => inProgram(s) && progWeek(s) === Math.max(1, w));
+  const p = S.plan, w = week(), ew = effWeek(w), tot = p.totalWeeks || 6, ph = phaseFor(p, ew);
+  const ds = days(), md = mainDays(p, w), day = currentDay();
+  const wkS = weekSessions(ew);
   const gym = wkS.filter(s => s.type === "gym" && md.includes(s.day)).length, run = wkS.filter(s => s.type === "run").length;
   const optDays = ds.filter(d => p.days[d].optional), opt = wkS.filter(s => s.type === "gym" && optDays.includes(s.day)).length;
   const pains = wkS.map(s => s.ankle).filter(v => v != null);
-  const dots = (n, of, c) => Array.from({ length: of }, (_, i) => `<span class="dot ${c} ${i < n ? "on" : ""}"></span>`).join("");
-  const ci = S.checkins["w" + String(w).padStart(2, "0")];
+  const ankleAvg = pains.length ? Math.round(pains.reduce((x, y) => x + y, 0) / pains.length * 10) / 10 : null;
+  const ci = S.checkins["w" + String(ew).padStart(2, "0")];
+  const streak = weekStreak();
+  const runsGoal = p.runsPerWeek || 1;
+  const progress = w < 1 ? 0 : Math.min(w, tot);
+  const actCard = `<button class="act-card" data-act="tab" data-v="scheda">
+    <div class="act-head">${icon("flame")} ${w < 1 ? "Si parte " + fmtDate(p.startDate) : w > tot ? "Stagione" : "Settimana " + w}<span class="r">${esc(ph ? ph.name : "")} ${icon("chevR")}</span></div>
+    <div class="act-body">
+      <div class="legend">
+        <div><div class="k" style="color:var(--move)">Allenamenti</div><div class="n num">${gym}<small>/${md.length}</small></div></div>
+        <div><div class="k" style="color:var(--lime)">Corsa</div><div class="n num">${run}<small>/${runsGoal}</small></div></div>
+        <div><div class="k" style="color:var(--cyan)">${w > tot ? "Mobilità" : "Programma"}</div><div class="n num">${w > tot ? opt : progress}<small>${w > tot ? "" : "/" + tot}</small></div></div>
+      </div>
+      ${rings([{ v: gym, max: md.length, color: "var(--move)" }, { v: run, max: runsGoal, color: "var(--lime)" }, { v: w > tot ? opt : progress, max: w > tot ? 1 : tot, color: "var(--cyan)" }], 96)}
+    </div>
+  </button>`;
   const a = S.active;
   let main;
   if (a) {
-    const doneEx = a.exercises.filter(e => e.sets.length && e.sets.every(s => s.done)).length;
-    main = `<div class="card hero active-card">
-      <div class="hero-head"><span class="badge lg ${esc(a.day)}">${esc(a.day)}</span><div><div class="wk-kicker">Allenamento in corso${a.home ? " · a casa" : ""}</div><h2>${esc(a.dayTitle || "")}</h2></div></div>
-      <p class="muted" style="margin:0 0 14px">${doneEx} di ${a.exercises.length} esercizi · iniziato ${a.date === todayISO() ? "alle " + fmtTime(a.startedAt) : fmtDate(a.date)}</p>
-      <button class="btn" data-act="resume">${icon("play")} Riprendi</button>
+    const doneEx = a.exercises.filter(e => e.sets.length && e.sets.every(x => x.done)).length;
+    main = `<div class="next-card d-${esc(a.day)}">
+      <div class="next-head"><span class="tile">${esc(a.day)}</span><div><div class="k">In corso${a.home ? " · a casa" : ""}</div><h2>${esc(a.dayTitle || "")}</h2></div></div>
+      <div class="facts"><span>${icon("dumbbell")} ${doneEx}/${a.exercises.length} esercizi</span><span>${icon("clock")} dalle ${fmtTime(a.startedAt)}</span></div>
+      <button class="btn day" data-act="resume">${icon("play")} Riprendi</button>
     </div>`;
   } else {
     const dd = p.days[day];
-    main = `<div class="seg lg" role="group" aria-label="Giorno" style="margin-bottom:12px">${ds.map(d => `<button data-act="pick-day" data-v="${d}" aria-pressed="${d === day}">${ds.length > 3 ? d : "Giorno " + d}</button>`).join("")}</div>
-    <div class="card hero">
-      <div class="hero-head"><span class="badge lg ${esc(day)}">${esc(day)}</span><div><div class="wk-kicker">${dd.optional ? "Facoltativa" : day === nextDay() ? "Prossimo" : "Giorno " + esc(day)}${S.home ? " · a casa" : ""}</div><h2>${esc(dd.title)}</h2></div></div>
-      ${dd.note ? `<p class="foot" style="margin:-4px 0 10px">${esc(dd.note)}</p>` : ""}
-      <ul class="ex-list">${list.some(e => e.block === "warmup") ? `<li class="ankle"><span>Riscaldamento</span><span>${list.filter(e => e.block === "warmup").length} esercizi</span></li>` : ""}${list.filter(e => e.block !== "warmup").map(e => `<li class="${e.block}"><span>${esc(e.name)}</span><span>${e.sets} × ${e.reps}${e.measure === "sec" ? " s" : e.measure === "m" ? " m" : ""}</span></li>`).join("")}</ul>
-      <div class="inline-row"><div><div>A casa</div><div class="foot">Esercizi senza palestra</div></div><label class="switch"><input type="checkbox" role="switch" data-act="home" ${S.home ? "checked" : ""}><span></span></label></div>
-      ${dd.optional ? "" : `<div class="inline-row"><div><div>Versione minima</div><div class="foot">Primi 3 esercizi più caviglia</div></div><label class="switch"><input type="checkbox" role="switch" data-act="minimal" ${S.minimal ? "checked" : ""}><span></span></label></div>`}
-      <button class="btn" data-act="start" data-v="${esc(day)}">${icon("play")} Inizia · circa ${estMinutes(list)} min</button>
+    const list = dayExercises(p, day, { week: w, minimal: S.minimal && !dd.optional, home: S.home });
+    const mainEx = list.filter(e => e.block === "main");
+    main = `<div class="day-picker" role="group" aria-label="Giorno">${ds.map(d => `<button class="day-dot d-${d}" data-act="pick-day" data-v="${d}" aria-pressed="${d === day}"><b>${d}</b>${esc(p.days[d].short || p.days[d].title.split(/[ ,]/)[0])}</button>`).join("")}</div>
+    <div class="next-card">
+      <div class="next-head"><span class="tile">${esc(day)}</span><div><div class="k">${dd.optional ? "Facoltativa" : day === nextDay() ? "Prossimo" : "Giorno " + esc(day)}</div><h2>${esc(dd.title)}</h2></div></div>
+      <div class="facts"><span>${icon("clock")} ${estMinutes(list)} min</span><span>${icon("dumbbell")} ${mainEx.length} esercizi</span>${S.home ? `<span>${icon("house")} a casa</span>` : ""}</div>
+      <div class="ex-names">${list.some(e => e.block === "warmup") ? `<span class="dim">Riscaldamento</span>` : ""}${mainEx.map(e => `<span>${esc(e.name)}</span>`).join("")}${list.some(e => e.block === "ankle") ? `<span class="dim">Caviglia</span>` : ""}</div>
+      <div class="toggles">
+        <button class="toggle-chip" data-act="home" aria-pressed="${S.home}">${icon("house")} A casa</button>
+        ${dd.optional ? "" : `<button class="toggle-chip" data-act="minimal" aria-pressed="${S.minimal}">${icon("bolt")} Minima</button>`}
+      </div>
+      <button class="btn day" data-act="start" data-v="${esc(day)}">${icon("play")} Inizia</button>
     </div>`;
   }
-  return `<div class="large-nav"><h1>Oggi</h1><button class="icon-btn filled" data-act="settings" aria-label="Impostazioni">${icon("gear")}</button></div>
-  <div class="subhead">${cap(new Date().toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" }))}</div>
-  ${weekCard()}
-  <div class="section-h">Allenamento</div>
-  ${main}
-  <div class="section-h">Settimana ${Math.max(1, w)}</div>
-  <div class="group">
-    <div class="row"><span class="grow">Allenamenti</span><span class="dots">${dots(gym, md.length, "g")}</span></div>
-    ${optDays.length ? `<div class="row"><span class="grow">Mobilità (facoltativa)</span><span class="detail num">${opt}</span></div>` : ""}
-    <div class="row"><span class="grow">Corsa</span><span class="dots">${dots(run, p.runsPerWeek || 2, "r")}</span></div>
-    <div class="row"><span class="grow">Caviglia, media</span><span class="detail num">${pains.length ? fmtN(Math.round(pains.reduce((x, y) => x + y, 0) / pains.length * 10) / 10) : "–"}</span></div>
-    <button class="row" data-act="open-run">${icon("run")}<span class="grow" style="color:var(--blue)">Registra corsa</span><span class="chev">${icon("chevR")}</span></button>
-    <button class="row" data-act="open-checkin">${icon("heart")}<span class="grow" style="color:var(--blue)">Check-in settimanale</span><span class="detail">${ci ? icon("checkSm") : ""}</span><span class="chev">${icon("chevR")}</span></button>
-  </div>
-  ${syncLine()}`;
+  return `<div class="top-bar">
+      <button class="circle-btn" data-act="settings" aria-label="Impostazioni">${icon("gear")}</button>
+      <button class="circle-btn" data-act="open-checkin" aria-label="Check-in settimanale" style="color:var(--move)">${icon(ci ? "heartFill" : "heart")}</button>
+    </div>
+    <h1 class="title-xl">Oggi</h1>
+    <div class="meta-row"><span class="l">${icon("today")} ${cap(new Date().toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" }))}</span>${streak ? `<span class="streak">${icon("flame")} ${streak} sett.</span>` : ""}</div>
+    ${actCard}
+    <div class="sec-title">Allenamento</div>
+    ${main}
+    <div class="sec-title">Settimana</div>
+    <div class="stack">
+      <button class="stat-card" style="--c:var(--green)" data-act="open-run"><span class="tile">${icon("run")}</span><div><div class="t">Corsa</div><div class="v num">${run}<small> di ${runsGoal}</small></div></div><span class="chev">${icon("chevR")}</span></button>
+      <button class="stat-card" style="--c:var(--move)" data-act="open-checkin"><span class="tile">${icon("heartFill")}</span><div><div class="t">Check-in</div><div class="v">${ci ? "Fatto" : "Da fare"}</div></div><span class="chev">${icon("chevR")}</span></button>
+      <div class="stat-card" style="--c:var(--cyan)"><span class="tile">${icon("target")}</span><div><div class="t">Caviglia, media</div><div class="v num">${ankleAvg == null ? "–" : fmtN(ankleAvg)}<small>${ankleAvg == null ? "" : " / 10"}</small></div></div></div>
+      ${optDays.length ? `<div class="stat-card" style="--c:var(--cyan)"><span class="tile">${icon("stack")}</span><div><div class="t">Mobilità facoltativa</div><div class="v num">${opt}</div></div></div>` : ""}
+    </div>
+    ${syncLine()}`;
 }
 function syncLine() {
   const st = store.status;
@@ -327,24 +362,26 @@ function viewWorkout() {
     </div>`).join("");
   let primary;
   if (pend >= 0) primary = e.measure === "sec"
-    ? `<button class="btn" data-act="primary">${icon("play")} Avvia serie ${pend + 1} · ${fmtSec(e.sets[pend].reps)}</button>`
-    : `<button class="btn" data-act="primary">${icon("check")} Serie ${pend + 1} di ${e.sets.length} fatta</button>`;
+    ? `<button class="btn day" data-act="primary">${icon("play")} Avvia serie ${pend + 1} · ${fmtSec(e.sets[pend].reps)}</button>`
+    : `<button class="btn day" data-act="primary">${icon("check")} Serie ${pend + 1} di ${e.sets.length} fatta</button>`;
   else if (ei < n - 1) primary = `<button class="btn green" data-act="primary">Prossimo esercizio ${icon("chevR")}</button>`;
   else primary = `<button class="btn green" data-act="primary">Termina allenamento</button>`;
   const elapsed = Math.floor((Date.now() - new Date(a.startedAt)) / 1000);
   return `<div class="wk-bar">
       <div class="wk-bar-top">
-        <button class="txt-btn" data-act="end-menu">Fine</button>
+        <button class="circle-btn" data-act="end-menu" aria-label="Fine allenamento">${icon("x")}</button>
         <div class="wk-bar-mid">Giorno ${esc(a.day)}<small class="js-elapsed num">${fmtSec(elapsed)}</small></div>
-        <button class="icon-btn" data-act="open-list" aria-label="Tutti gli esercizi">${icon("list")}</button>
+        <button class="circle-btn" data-act="open-list" aria-label="Tutti gli esercizi">${icon("list")}</button>
       </div>
       <div class="segs" aria-hidden="true">${segs}</div>
     </div>
-    <div class="wk-head" id="wk-swipe">
+    <div class="wk-head" id="wk-swipe"><div class="txt">
       <div class="wk-kicker">${e.block === "ankle" ? "Caviglia · " : e.block === "warmup" ? "Riscaldamento · " : ""}Esercizio ${ei + 1} di ${n}</div>
       <h1 class="wk-title">${esc(e.name)}${e.mode === "home" ? '<span class="tag">a casa</span>' : ""}</h1>
-      <div class="wk-sub"><b>${e.target.sets} × ${fmtN(e.target.reps)}</b> ${unitLong(e.measure)}${e.perSide ? " per lato" : ""} · recupero ${fmtSec(e.target.rest)}</div>
+      <div class="wk-sub"><b>${e.target.sets} × ${fmtN(e.target.reps)}</b> ${unitLong(e.measure)}${e.perSide ? " per lato" : ""}${e.target.rest ? " · recupero " + fmtSec(e.target.rest) : ""}</div>
       ${pe.note ? `<div class="foot" style="margin-top:6px">${esc(pe.note)}</div>` : ""}
+    </div>
+      <div class="wk-ring">${rings([{ v: e.sets.filter(x => x.done).length, max: e.sets.length, color: "var(--day)" }], 76)}<span><div>${e.sets.filter(x => x.done).length}/${e.sets.length}<small>SERIE</small></div></span></div>
     </div>
     <div class="group">
       <button class="how-toggle" data-act="how" data-v="${esc(e.id)}" aria-expanded="${howOpen}">${icon("book", "ic")}Come si fa<span class="chev">${icon("chevR")}</span></button>
@@ -598,7 +635,7 @@ function viewStorico() {
       return `<div class="section-h">${w === 0 ? "Scheda di settembre" : `Settimana ${w}${ph ? " · " + esc(ph.name) : ""}`}</div><div class="group">${byWeek[w].map(s => {
         const isRun = s.type === "run", st = isRun ? null : sessionStats(s);
         const sub = isRun ? `${s.minutes ?? "–"} min · ${esc(s.kind || "")}` : s.exercises.length ? `${st.sets} serie${st.min ? " · " + st.min + " min" : ""}${s.rpe ? " · RPE " + s.rpe : ""}` : "Dati non salvati dalla vecchia app";
-        return `<button class="row with-badge" data-act="open-session" data-v="${esc(s.id)}"><span class="badge ${isRun ? "R" : esc(s.day)}">${isRun ? icon("run") : esc(s.day)}</span><div class="grow"><div class="row-title">${isRun ? "Corsa" : esc(s.dayTitle || "Giorno " + s.day)}</div><div class="row-sub">${fmtDate(s.date)} · ${sub}</div></div><span class="chev">${icon("chevR")}</span></button>`;
+        return `<button class="row with-badge" data-act="open-session" data-v="${esc(s.id)}"><span class="badge d-${isRun ? "R" : esc(s.day)}">${isRun ? icon("run") : esc(s.day)}</span><div class="grow"><div class="row-title">${isRun ? "Corsa" : esc(s.dayTitle || "Giorno " + s.day)}</div><div class="row-sub">${fmtDate(s.date)} · ${sub}</div></div><span class="chev">${icon("chevR")}</span></button>`;
       }).join("")}</div>`;
     }).join("");
   } else {
@@ -614,7 +651,16 @@ function viewStorico() {
       return `<button class="row" data-act="open-exercise" data-v="${esc(e.id)}"><div class="grow"><div class="row-title">${esc(e.name)}</div><div class="row-sub">${hist.length} ${hist.length === 1 ? "volta" : "volte"} · ultimo ${fmtN(now)} ${loadEx ? "kg" : unitOf(e.measure)}</div></div>${diff ? `<span class="${diff > 0 ? "delta-up" : "delta-down"}">${diff > 0 ? "+" : ""}${fmtN(diff)}</span>` : ""}<span class="chev">${icon("chevR")}</span></button>`;
     }).join("")}</div>`;
   }
-  return `<div class="large-nav"><h1>Storico</h1></div><div class="subhead">${S.sessions.length} sessioni</div>${seg}${body}`;
+  const gs = gymSessions().filter(inProgram), st = gs.map(sessionStats);
+  const sum = k => st.reduce((x, y) => x + (y[k] || 0), 0);
+  const mins = sum("min");
+  const summary = `<div class="grid2" style="margin-bottom:18px">
+    <div class="mini" style="--c:var(--move)"><span class="tile sm">${icon("flame")}</span><div><div class="v num">${gs.length}</div><div class="t">Allenamenti</div></div></div>
+    <div class="mini" style="--c:var(--lime)"><span class="tile sm">${icon("stack")}</span><div><div class="v num">${sum("sets")}</div><div class="t">Serie</div></div></div>
+    <div class="mini" style="--c:var(--blue)"><span class="tile sm">${icon("dumbbell")}</span><div><div class="v num">${fmtN(Math.round(sum("vol") / 100) / 10)}<small style="font-size:15px"> t</small></div><div class="t">Sollevate</div></div></div>
+    <div class="mini" style="--c:var(--cyan)"><span class="tile sm">${icon("clock")}</span><div><div class="v num">${Math.floor(mins / 60)}h ${mins % 60}m</div><div class="t">In palestra</div></div></div>
+  </div>`;
+  return `<div class="top-bar"><span></span><span></span></div><h1 class="title-xl">Storico</h1><div class="meta-row"><span class="l">${icon("today")} Dal ${fmtDate(S.plan.startDate)}</span></div>${summary}${seg}${body}`;
 }
 
 /* ---------- Scheda ---------- */
@@ -625,9 +671,9 @@ function viewScheda() {
   const list = dayExercises(p, d, { week: w });
   const rows = l => l.map(e => `<button class="row" data-act="open-exercise" data-v="${esc(e.id)}"><div class="grow"><div class="row-title">${esc(e.name)}</div><div class="row-sub">${e.sets} × ${e.reps} ${unitLong(e.measure)}${e.perSide ? " per lato" : ""}${e.rest ? " · recupero " + fmtSec(e.rest) : ""}</div></div><span class="chev">${icon("chevR")}</span></button>`).join("");
   const sec = (title, block) => { const l = list.filter(e => e.block === block); return l.length ? `<div class="section-h">${title}</div><div class="group">${rows(l)}</div>` : ""; };
-  return `<div class="large-nav"><h1>Scheda</h1></div><div class="subhead">Settimana ${effWeek(w)}: serie e ripetizioni di questa settimana</div>
-  <div class="seg" role="group">${tabs.map(k => `<button data-act="plan-day" data-v="${k}" aria-pressed="${k === d}">${k}</button>`).join("")}</div>
-  <div class="hero-head" style="margin:18px 4px 0"><span class="badge ${esc(d)}">${esc(d)}</span><div><div class="wk-kicker">${dd.optional ? "Facoltativa" : dd.weeks ? "Settimane " + esc(dd.weeks.replace("-99", " in poi")) : ""}</div><h2 style="font-size:20px">${esc(dd.title)}</h2></div></div>
+  return `<div class="top-bar"><span></span><span></span></div><h1 class="title-xl">Scheda</h1><div class="subhead" style="margin-top:8px">Settimana ${effWeek(w)}: serie e ripetizioni di questa settimana</div>
+  <div class="day-picker" role="group">${tabs.map(k => `<button class="day-dot d-${k}" data-act="plan-day" data-v="${k}" aria-pressed="${k === d}"><b>${k}</b></button>`).join("")}</div>
+  <div class="hero-head" style="margin:18px 4px 0"><span class="badge d-${esc(d)}">${esc(d)}</span><div><div class="wk-kicker">${dd.optional ? "Facoltativa" : dd.weeks ? "Settimane " + esc(dd.weeks.replace("-99", " in poi")) : ""}</div><h2 style="font-size:20px">${esc(dd.title)}</h2></div></div>
   ${dd.note ? `<p class="foot" style="margin:6px 4px 0">${esc(dd.note)}</p>` : ""}
   ${sec("Riscaldamento", "warmup")}${sec("Esercizi", "main")}${sec("Blocco caviglia", "ankle")}
   <div class="section-h">Settimana tipo</div><div class="card">${esc(p.schedule)}</div>
@@ -823,8 +869,8 @@ document.addEventListener("click", async ev => {
     case "export": exportData(); break;
     case "reload": location.reload(); break;
     case "pick-day": S.pickDay = v; render(true); break;
-    case "minimal": S.minimal = t.checked; saveUI(); render(true); break;
-    case "home": S.home = t.checked; saveUI(); render(true); break;
+    case "minimal": S.minimal = !S.minimal; saveUI(); render(true); break;
+    case "home": S.home = !S.home; saveUI(); render(true); break;
     case "start": startWorkout(v); break;
     case "resume": resumeWorkout(); break;
     case "step": stepValue(ei, i, t.dataset.f, +t.dataset.d); break;

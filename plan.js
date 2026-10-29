@@ -61,7 +61,8 @@ export function dayExercises(plan, day, { week, minimal = false, home = false } 
   const map = (list, block) => (list || []).map(e => resolve(plan, e, w, ph, block, home)).filter(Boolean);
   let main = map(d.exercises, "main");
   if (minimal) main = main.slice(0, 3);
-  return [...(d.warmup ? map(plan.warmup, "warmup") : []), ...main, ...(d.ankle ? map(plan.ankle, "ankle") : [])];
+  const warm = d.warmup ? map(plan.warmup, "warmup").filter(e => !(d.warmupSkip || []).includes(e.id)) : [];
+  return [...warm, ...main, ...(d.ankle ? map(plan.ankle, "ankle") : [])];
 }
 
 /* ---------- history ---------- */
