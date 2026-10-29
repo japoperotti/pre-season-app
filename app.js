@@ -1,7 +1,7 @@
 import * as store from "./store.js";
-import { todayISO, weekOf, phaseFor, dayExercises, findExercise, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
+import { todayISO, weekOf, effWeek, phaseFor, availableDays, mainDays, dayExercises, findExercise, programExercises, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
 
-const VERSION = "2.0.0";
+const VERSION = "2.1.0";
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -41,9 +41,9 @@ const S = {
   plan: null, sessions: [], checkins: {}, active: null,
   tab: "oggi", view: "tabs", pickDay: null, minimal: false,
   exIdx: 0, howOpen: {}, rest: null, work: null, sheet: null,
-  histMode: "sessioni", planDay: "A", deferred: false
+  histMode: "sessioni", planDay: "A", home: false, deferred: false
 };
-const UI_KEYS = ["tab", "view", "exIdx", "howOpen", "rest", "work", "minimal", "histMode", "planDay"];
+const UI_KEYS = ["tab", "view", "exIdx", "howOpen", "rest", "work", "minimal", "home", "histMode", "planDay"];
 function saveUI() { try { localStorage.setItem("ui", JSON.stringify(Object.fromEntries(UI_KEYS.map(k => [k, S[k]])))); } catch (e) {} }
 function loadUI() { try { Object.assign(S, JSON.parse(localStorage.getItem("ui") || "{}")); } catch (e) {} }
 
@@ -65,13 +65,21 @@ const sessionPath = s => "sessions/" + s.id + ".json";
 function persistActive() { if (S.active) store.save(sessionPath(S.active), S.active, { sync: false }); saveUI(); }
 
 const week = () => weekOf(S.plan, todayISO());
-const days = () => Object.keys(S.plan.days || {}).sort();
+const days = () => availableDays(S.plan, week());
 const gymSessions = () => S.sessions.filter(s => s.type === "gym");
+// sessions of the current program, by its own week numbers
+const inProgram = s => s.date >= S.plan.startDate;
+const progWeek = s => weekOf(S.plan, s.date);
 function nextDay() {
-  const ds = days(), last = gymSessions().find(s => ds.includes(s.day));
+  const ds = mainDays(S.plan, week()), last = gymSessions().find(s => inProgram(s) && ds.includes(s.day));
+  if (!ds.length) return days()[0];
   return last ? ds[(ds.indexOf(last.day) + 1) % ds.length] : ds[0];
 }
-function lastFor(exId, before) { return lastPerformance(S.sessions, exId, before); }
+// last time this exercise was done, same place (gym/home), counting the old program's ids
+function lastFor(ex, before) {
+  const def = findExercise(S.plan, ex.id) || {};
+  return lastPerformance(S.sessions, [ex.id, ...(def.aliases || [])], before, ex.mode || "gym");
+}
 
 /* ---------- keep the screen awake ---------- */
 const Awake = {
@@ -172,11 +180,11 @@ function weekCard() {
   const left = Math.max(0, tot - Math.max(0, w));
   return `<div class="card week-card">
     <div class="week-top">
-      <div class="week-big num">${w < 1 ? 0 : Math.min(w, tot)}<small> / ${tot}</small></div>
-      ${ph ? `<span class="pill blue">${esc(ph.name)}</span>` : w > tot ? `<span class="pill">Stagione</span>` : ""}
+      <div class="week-big num">${w > tot ? "Stagione" : `${w < 1 ? 0 : w}<small> / ${tot}</small>`}</div>
+      ${ph && w <= tot ? `<span class="pill blue">${esc(ph.name)}</span>` : ""}
     </div>
     <div class="bars" aria-hidden="true">${bars}</div>
-    <div class="foot">${w < 1 ? "Si parte " + fmtDate(p.startDate) : w > tot ? "Pre-season finita" : `Settimana ${w} · ${left === 0 ? "ultima settimana" : left === 1 ? "ancora 1 settimana" : "ancora " + left + " settimane"}`}${ph ? ". " + esc(ph.note) : ""}</div>
+    <div class="foot">${w < 1 ? "Si parte " + fmtDate(p.startDate) + ". " + esc(phaseFor(p, 1)?.note || "") : `${w > tot ? "Settimana " + w : `Settimana ${w} · ${left === 0 ? "ultima settimana" : left === 1 ? "ancora 1 settimana" : "ancora " + left + " settimane"}`}${ph ? ". " + esc(ph.note) : ""}`}</div>
   </div>`;
 }
 function estMinutes(list) {
@@ -184,10 +192,12 @@ function estMinutes(list) {
 }
 function viewOggi() {
   const p = S.plan, w = week();
-  const day = S.pickDay && p.days[S.pickDay] ? S.pickDay : nextDay();
-  const list = dayExercises(p, day, { week: w, minimal: S.minimal });
-  const wkS = S.sessions.filter(s => s.week === w || weekOf(p, s.date) === w);
-  const gym = wkS.filter(s => s.type === "gym").length, run = wkS.filter(s => s.type === "run").length;
+  const ds = days(), md = mainDays(p, w);
+  const day = S.pickDay && ds.includes(S.pickDay) ? S.pickDay : nextDay();
+  const list = dayExercises(p, day, { week: w, minimal: S.minimal, home: S.home });
+  const wkS = S.sessions.filter(s => inProgram(s) && progWeek(s) === Math.max(1, w));
+  const gym = wkS.filter(s => s.type === "gym" && md.includes(s.day)).length, run = wkS.filter(s => s.type === "run").length;
+  const optDays = ds.filter(d => p.days[d].optional), opt = wkS.filter(s => s.type === "gym" && optDays.includes(s.day)).length;
   const pains = wkS.map(s => s.ankle).filter(v => v != null);
   const dots = (n, of, c) => Array.from({ length: of }, (_, i) => `<span class="dot ${c} ${i < n ? "on" : ""}"></span>`).join("");
   const ci = S.checkins["w" + String(w).padStart(2, "0")];
@@ -196,16 +206,19 @@ function viewOggi() {
   if (a) {
     const doneEx = a.exercises.filter(e => e.sets.length && e.sets.every(s => s.done)).length;
     main = `<div class="card hero active-card">
-      <div class="hero-head"><span class="badge lg ${esc(a.day)}">${esc(a.day)}</span><div><div class="wk-kicker">Allenamento in corso</div><h2>${esc(a.dayTitle || "")}</h2></div></div>
+      <div class="hero-head"><span class="badge lg ${esc(a.day)}">${esc(a.day)}</span><div><div class="wk-kicker">Allenamento in corso${a.home ? " · a casa" : ""}</div><h2>${esc(a.dayTitle || "")}</h2></div></div>
       <p class="muted" style="margin:0 0 14px">${doneEx} di ${a.exercises.length} esercizi · iniziato ${a.date === todayISO() ? "alle " + fmtTime(a.startedAt) : fmtDate(a.date)}</p>
       <button class="btn" data-act="resume">${icon("play")} Riprendi</button>
     </div>`;
   } else {
-    main = `<div class="seg lg" role="group" aria-label="Giorno" style="margin-bottom:12px">${days().map(d => `<button data-act="pick-day" data-v="${d}" aria-pressed="${d === day}">Giorno ${d}</button>`).join("")}</div>
+    const dd = p.days[day];
+    main = `<div class="seg lg" role="group" aria-label="Giorno" style="margin-bottom:12px">${ds.map(d => `<button data-act="pick-day" data-v="${d}" aria-pressed="${d === day}">${ds.length > 3 ? d : "Giorno " + d}</button>`).join("")}</div>
     <div class="card hero">
-      <div class="hero-head"><span class="badge lg ${esc(day)}">${esc(day)}</span><div><div class="wk-kicker">${day === nextDay() ? "Prossimo" : "Giorno " + esc(day)}</div><h2>${esc(p.days[day].title)}</h2></div></div>
-      <ul class="ex-list">${list.map(e => `<li class="${e.block}"><span>${esc(e.name)}</span><span>${e.sets} × ${e.reps}${e.measure === "sec" ? " s" : e.measure === "m" ? " m" : ""}</span></li>`).join("")}</ul>
-      <div class="inline-row"><div><div>Versione minima</div><div class="foot">Primi 3 esercizi più caviglia</div></div><label class="switch"><input type="checkbox" role="switch" data-act="minimal" ${S.minimal ? "checked" : ""}><span></span></label></div>
+      <div class="hero-head"><span class="badge lg ${esc(day)}">${esc(day)}</span><div><div class="wk-kicker">${dd.optional ? "Facoltativa" : day === nextDay() ? "Prossimo" : "Giorno " + esc(day)}${S.home ? " · a casa" : ""}</div><h2>${esc(dd.title)}</h2></div></div>
+      ${dd.note ? `<p class="foot" style="margin:-4px 0 10px">${esc(dd.note)}</p>` : ""}
+      <ul class="ex-list">${list.some(e => e.block === "warmup") ? `<li class="ankle"><span>Riscaldamento</span><span>${list.filter(e => e.block === "warmup").length} esercizi</span></li>` : ""}${list.filter(e => e.block !== "warmup").map(e => `<li class="${e.block}"><span>${esc(e.name)}</span><span>${e.sets} × ${e.reps}${e.measure === "sec" ? " s" : e.measure === "m" ? " m" : ""}</span></li>`).join("")}</ul>
+      <div class="inline-row"><div><div>A casa</div><div class="foot">Esercizi senza palestra</div></div><label class="switch"><input type="checkbox" role="switch" data-act="home" ${S.home ? "checked" : ""}><span></span></label></div>
+      ${dd.optional ? "" : `<div class="inline-row"><div><div>Versione minima</div><div class="foot">Primi 3 esercizi più caviglia</div></div><label class="switch"><input type="checkbox" role="switch" data-act="minimal" ${S.minimal ? "checked" : ""}><span></span></label></div>`}
       <button class="btn" data-act="start" data-v="${esc(day)}">${icon("play")} Inizia · circa ${estMinutes(list)} min</button>
     </div>`;
   }
@@ -216,8 +229,9 @@ function viewOggi() {
   ${main}
   <div class="section-h">Settimana ${Math.max(1, w)}</div>
   <div class="group">
-    <div class="row"><span class="grow">Palestra</span><span class="dots">${dots(gym, days().length, "g")}</span></div>
-    <div class="row"><span class="grow">Corsa</span><span class="dots">${dots(run, 2, "r")}</span></div>
+    <div class="row"><span class="grow">Allenamenti</span><span class="dots">${dots(gym, md.length, "g")}</span></div>
+    ${optDays.length ? `<div class="row"><span class="grow">Mobilità (facoltativa)</span><span class="detail num">${opt}</span></div>` : ""}
+    <div class="row"><span class="grow">Corsa</span><span class="dots">${dots(run, p.runsPerWeek || 2, "r")}</span></div>
     <div class="row"><span class="grow">Caviglia, media</span><span class="detail num">${pains.length ? fmtN(Math.round(pains.reduce((x, y) => x + y, 0) / pains.length * 10) / 10) : "–"}</span></div>
     <button class="row" data-act="open-run">${icon("run")}<span class="grow" style="color:var(--blue)">Registra corsa</span><span class="chev">${icon("chevR")}</span></button>
     <button class="row" data-act="open-checkin">${icon("heart")}<span class="grow" style="color:var(--blue)">Check-in settimanale</span><span class="detail">${ci ? icon("checkSm") : ""}</span><span class="chev">${icon("chevR")}</span></button>
@@ -239,16 +253,17 @@ function syncLine() {
 
 /* ---------- start / resume ---------- */
 function startWorkout(day) {
-  const p = S.plan, w = week(), ph = phaseFor(p, w), date = todayISO();
-  const list = dayExercises(p, day, { week: w, minimal: S.minimal });
+  const p = S.plan, w = week(), ph = phaseFor(p, effWeek(w)), date = todayISO();
+  const minimal = S.minimal && !p.days[day].optional;
+  const list = dayExercises(p, day, { week: w, minimal, home: S.home });
   S.active = {
     id: `${date}-${day}-${uid()}`, type: "gym", status: "in_corso", date, week: w, phase: ph ? ph.name : null,
-    day, dayTitle: p.days[day].title, minimal: S.minimal,
+    day, dayTitle: p.days[day].title, minimal, home: S.home,
     startedAt: new Date().toISOString(), endedAt: null, durationMin: null,
     exercises: list.map(ex => ({
-      id: ex.id, name: ex.name, block: ex.block, load: ex.load, measure: ex.measure, perSide: !!ex.perSide, step: ex.step,
+      id: ex.id, name: ex.name, mode: ex.mode, block: ex.block, load: ex.load, measure: ex.measure, perSide: !!ex.perSide, step: ex.step,
       target: { sets: ex.sets, reps: ex.reps, rest: ex.rest },
-      sets: buildSets(ex, lastFor(ex.id)), feel: null, like: null, failed: false, note: ""
+      sets: buildSets(ex, lastFor(ex)), feel: null, like: null, failed: false, note: ""
     })),
     ankle: null, rpe: null, note: "", app: VERSION
   };
@@ -265,7 +280,10 @@ function resumeWorkout() {
 
 /* ---------- workout ---------- */
 const curEx = () => S.active.exercises[S.exIdx];
-const planEx = e => ({ ...(findExercise(S.plan, e.id) || {}), ...e });
+function planEx(e) {
+  const d = findExercise(S.plan, e.id) || {}, h = e.mode === "home" ? (d.home || {}) : {};
+  return { ...d, ...h, how: h.how || d.how, note: h.note ?? d.note, ...e };
+}
 function stepper(ei, si, f, val, unit) {
   return `<div class="stepper">
     <button data-act="step" data-ex="${ei}" data-i="${si}" data-f="${f}" data-d="-1" aria-label="Meno">−</button>
@@ -277,10 +295,12 @@ function howBlock(h) {
   if (!h) return "";
   if (typeof h === "string") return `<div class="how"><p>${esc(h)}</p></div>`;
   return `<div class="how">
+    ${h.why ? `<h4>A cosa serve</h4><p>${esc(h.why)}</p>` : ""}
     ${h.setup ? `<h4>Posizione</h4><p>${esc(h.setup)}</p>` : ""}
     ${h.steps?.length ? `<h4>Esecuzione</h4><ol>${h.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>` : ""}
     ${h.cues?.length ? `<h4>Da ricordare</h4><ul class="cues">${h.cues.map(s => `<li>${icon("checkSm")}${esc(s)}</li>`).join("")}</ul>` : ""}
     ${h.avoid?.length ? `<h4>Da evitare</h4><ul class="avoid">${h.avoid.map(s => `<li>${icon("x")}${esc(s)}</li>`).join("")}</ul>` : ""}
+    ${h.progression ? `<h4>Progressione</h4><p>${esc(h.progression)}</p>` : ""}
   </div>`;
 }
 const setTxt = (e, s) => e.load === "none" || (e.load === "bw+" && !+s.kg) ? `${fmtN(s.reps)} ${unitOf(e.measure)}` : `${e.load === "bw+" ? "+" : ""}${fmtN(s.kg)} kg × ${fmtN(s.reps)}${e.measure === "reps" ? "" : " " + unitOf(e.measure)}`;
@@ -293,7 +313,7 @@ const feelLbl = { facile: "Facile", giusto: "Giusto", duro: "Duro" };
 function viewWorkout() {
   const a = S.active, ei = S.exIdx, e = curEx(), pe = planEx(e), n = a.exercises.length;
   const pend = e.sets.findIndex(s => !s.done);
-  const last = lastFor(e.id, a);
+  const last = lastFor(e, a);
   const sugg = suggestion({ ...pe, sets: e.target.sets, reps: e.target.reps }, last);
   const howOpen = S.howOpen[e.id] ?? !last;
   const hasLoad = e.load !== "none";
@@ -321,8 +341,8 @@ function viewWorkout() {
       <div class="segs" aria-hidden="true">${segs}</div>
     </div>
     <div class="wk-head" id="wk-swipe">
-      <div class="wk-kicker">${e.block === "ankle" ? "Caviglia · " : ""}Esercizio ${ei + 1} di ${n}</div>
-      <h1 class="wk-title">${esc(e.name)}</h1>
+      <div class="wk-kicker">${e.block === "ankle" ? "Caviglia · " : e.block === "warmup" ? "Riscaldamento · " : ""}Esercizio ${ei + 1} di ${n}</div>
+      <h1 class="wk-title">${esc(e.name)}${e.mode === "home" ? '<span class="tag">a casa</span>' : ""}</h1>
       <div class="wk-sub"><b>${e.target.sets} × ${fmtN(e.target.reps)}</b> ${unitLong(e.measure)}${e.perSide ? " per lato" : ""} · recupero ${fmtSec(e.target.rest)}</div>
       ${pe.note ? `<div class="foot" style="margin-top:6px">${esc(pe.note)}</div>` : ""}
     </div>
@@ -388,7 +408,7 @@ function markDone(ei, i) {
   const allDone = a.exercises.every(x => x.sets.every(y => y.done));
   if (exDone && ei === S.exIdx && ei < a.exercises.length - 1) S.exIdx = ei + 1;
   if (allDone) { toast("Ultima serie fatta. Ottimo lavoro"); persistActive(); render(true); return; }
-  startRest(ei, i, exDone);
+  if (e.target.rest > 0) startRest(ei, i, exDone);
   persistActive(); render(true); window.scrollTo(0, 0);
 }
 function primaryAction() {
@@ -412,7 +432,7 @@ function nextLabel(ei, i, exDone) {
   return { title: `Prossimo: ${esc(nextEx.name)}`, sub: `${nextEx.sets.length} serie · ${setTxt(nextEx, s)}` };
 }
 function startRest(ei, i, exDone) {
-  const total = S.active.exercises[ei].target.rest || 90, now = Date.now();
+  const total = S.active.exercises[ei].target.rest ?? 90, now = Date.now();
   S.rest = { start: now, end: now + total * 1000, total, ei, i, exDone, fired: false };
   saveUI(); tickStart();
 }
@@ -511,7 +531,7 @@ function sessionStats(s) {
 function exSummaryRows(s) {
   return s.exercises.map(e => {
     const d = e.sets.filter(x => x.done);
-    const last = lastFor(e.id, s);
+    const last = lastFor(e, s);
     let delta = "";
     if (e.load !== "none" && d.length && last) {
       const diff = Math.round((topKg(e) - topKg(last.ex)) * 100) / 100;
@@ -571,19 +591,21 @@ function viewStorico() {
   if (S.histMode === "sessioni") {
     if (!S.sessions.length) body = `<div class="empty">Nessun allenamento ancora.</div>`;
     const byWeek = {};
-    S.sessions.forEach(s => { const w = s.week ?? weekOf(p, s.date); (byWeek[w] ||= []).push(s); });
+    // sessions before the program start belong to the September program
+    S.sessions.forEach(s => { const w = inProgram(s) ? progWeek(s) : 0; (byWeek[w] ||= []).push(s); });
     body += Object.keys(byWeek).map(Number).sort((a, b) => b - a).map(w => {
       const ph = phaseFor(p, w);
-      return `<div class="section-h">Settimana ${w}${ph ? " · " + esc(ph.name) : ""}</div><div class="group">${byWeek[w].map(s => {
+      return `<div class="section-h">${w === 0 ? "Scheda di settembre" : `Settimana ${w}${ph ? " · " + esc(ph.name) : ""}`}</div><div class="group">${byWeek[w].map(s => {
         const isRun = s.type === "run", st = isRun ? null : sessionStats(s);
         const sub = isRun ? `${s.minutes ?? "–"} min · ${esc(s.kind || "")}` : s.exercises.length ? `${st.sets} serie${st.min ? " · " + st.min + " min" : ""}${s.rpe ? " · RPE " + s.rpe : ""}` : "Dati non salvati dalla vecchia app";
         return `<button class="row with-badge" data-act="open-session" data-v="${esc(s.id)}"><span class="badge ${isRun ? "R" : esc(s.day)}">${isRun ? icon("run") : esc(s.day)}</span><div class="grow"><div class="row-title">${isRun ? "Corsa" : esc(s.dayTitle || "Giorno " + s.day)}</div><div class="row-sub">${fmtDate(s.date)} · ${sub}</div></div><span class="chev">${icon("chevR")}</span></button>`;
       }).join("")}</div>`;
     }).join("");
   } else {
-    const all = [...days().flatMap(d => p.days[d].exercises.map(e => ({ ...e, day: d }))), ...(p.ankle || []).map(e => ({ ...e, day: "K" }))];
+    const all = programExercises(p);
     body = `<div class="group" style="margin-top:16px">${all.map(e => {
-      const hist = gymSessions().map(s => s.exercises.find(x => x.id === e.id)).filter(x => x && x.sets.some(y => y.done));
+      const ids = [e.id, ...(e.aliases || [])];
+      const hist = gymSessions().map(s => s.exercises.find(x => ids.includes(x.id) && (x.mode || "gym") === "gym")).filter(x => x && x.sets.some(y => y.done));
       if (!hist.length) return `<button class="row" data-act="open-exercise" data-v="${esc(e.id)}"><div class="grow"><div class="row-title">${esc(e.name)}</div><div class="row-sub">Mai fatto</div></div><span class="chev">${icon("chevR")}</span></button>`;
       const loadEx = e.load !== "none";
       const now = loadEx ? topKg(hist[0]) : Math.max(...hist[0].sets.filter(s => s.done).map(s => +s.reps || 0));
@@ -598,15 +620,18 @@ function viewStorico() {
 /* ---------- Scheda ---------- */
 function viewScheda() {
   const p = S.plan, w = week();
-  const tabs = [...days(), "K"];
-  const d = tabs.includes(S.planDay) ? S.planDay : "A";
-  const list = d === "K" ? dayExercises({ ...p, days: {} }, "_", { week: w }) : dayExercises({ ...p, ankle: [] }, d, { week: w });
-  return `<div class="large-nav"><h1>Scheda</h1></div><div class="subhead">Settimana ${Math.max(1, w)}: serie e ripetizioni di questa settimana</div>
-  <div class="seg" role="group">${tabs.map(k => `<button data-act="plan-day" data-v="${k}" aria-pressed="${k === d}">${k === "K" ? "Caviglia" : "Giorno " + k}</button>`).join("")}</div>
-  <div class="section-h">${d === "K" ? "Caviglia, ogni sessione" : esc(p.days[d].title)}</div>
-  <div class="group">${list.map(e => `<button class="row" data-act="open-exercise" data-v="${esc(e.id)}"><div class="grow"><div class="row-title">${esc(e.name)}</div><div class="row-sub">${e.sets} × ${e.reps} ${unitLong(e.measure)}${e.perSide ? " per lato" : ""} · recupero ${fmtSec(e.rest)}</div></div><span class="chev">${icon("chevR")}</span></button>`).join("")}</div>
+  const tabs = Object.keys(p.days || {}).sort();
+  const d = tabs.includes(S.planDay) ? S.planDay : tabs[0], dd = p.days[d];
+  const list = dayExercises(p, d, { week: w });
+  const rows = l => l.map(e => `<button class="row" data-act="open-exercise" data-v="${esc(e.id)}"><div class="grow"><div class="row-title">${esc(e.name)}</div><div class="row-sub">${e.sets} × ${e.reps} ${unitLong(e.measure)}${e.perSide ? " per lato" : ""}${e.rest ? " · recupero " + fmtSec(e.rest) : ""}</div></div><span class="chev">${icon("chevR")}</span></button>`).join("");
+  const sec = (title, block) => { const l = list.filter(e => e.block === block); return l.length ? `<div class="section-h">${title}</div><div class="group">${rows(l)}</div>` : ""; };
+  return `<div class="large-nav"><h1>Scheda</h1></div><div class="subhead">Settimana ${effWeek(w)}: serie e ripetizioni di questa settimana</div>
+  <div class="seg" role="group">${tabs.map(k => `<button data-act="plan-day" data-v="${k}" aria-pressed="${k === d}">${k}</button>`).join("")}</div>
+  <div class="hero-head" style="margin:18px 4px 0"><span class="badge ${esc(d)}">${esc(d)}</span><div><div class="wk-kicker">${dd.optional ? "Facoltativa" : dd.weeks ? "Settimane " + esc(dd.weeks.replace("-99", " in poi")) : ""}</div><h2 style="font-size:20px">${esc(dd.title)}</h2></div></div>
+  ${dd.note ? `<p class="foot" style="margin:6px 4px 0">${esc(dd.note)}</p>` : ""}
+  ${sec("Riscaldamento", "warmup")}${sec("Esercizi", "main")}${sec("Blocco caviglia", "ankle")}
   <div class="section-h">Settimana tipo</div><div class="card">${esc(p.schedule)}</div>
-  <div class="section-h">Fasi</div><div class="group">${(p.phases || []).map(f => `<div class="row"><div class="grow"><div class="row-title">Sett. ${f.from}-${f.to} · ${esc(f.name)}${w >= f.from && w <= f.to ? ' <span class="pill blue">ora</span>' : ""}</div><div class="row-sub">${esc(f.note)}</div></div></div>`).join("")}</div>
+  <div class="section-h">Fasi</div><div class="group">${(p.phases || []).map(f => `<div class="row"><div class="grow"><div class="row-title">${f.to >= 99 ? "Dalla sett. " + f.from : f.from === f.to ? "Sett. " + f.from : `Sett. ${f.from}-${f.to}`} · ${esc(f.name)}${w >= f.from && w <= f.to ? ' <span class="pill blue">ora</span>' : ""}</div><div class="row-sub">${esc(f.note)}</div></div></div>`).join("")}</div>
   <div class="section-h">Regole</div><div class="group">${(p.rules || []).map(r => `<div class="row"><div class="grow" style="font-size:15px">${esc(r)}</div></div>`).join("")}</div>
   <div class="section-f">La scheda si modifica con Claude, nel repo dei dati.</div>`;
 }
@@ -700,6 +725,28 @@ function sheetRun(sh) {
     <div style="margin-top:16px"><button class="btn" data-act="save-run">Salva corsa</button></div>`,
     { left: `<button class="txt-btn" data-act="close-sheet">Annulla</button>`, right: "" });
 }
+function testsBlock(c, w) {
+  const t = S.plan.tests;
+  if (!t || !(t.weeks || []).includes(w)) return "";
+  const v = (id, side) => c.tests?.[id]?.[side] ?? "";
+  return `<div class="section-h">Test di partenza</div>
+    <div class="card">
+      <p class="foot" style="margin:0 0 4px">${esc(t.note || "")}</p>
+      ${t.items.map(it => `<span class="field-label">${esc(it.name)} (${esc(it.unit)})</span>
+        <p class="foot" style="margin:-4px 0 8px">${esc(it.how)}</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <input class="field" inputmode="decimal" placeholder="Sinistra" aria-label="${esc(it.name)} sinistra" data-bind="test:${it.id}:sx" value="${esc(v(it.id, "sx"))}">
+          <input class="field" inputmode="decimal" placeholder="Destra" aria-label="${esc(it.name)} destra" data-bind="test:${it.id}:dx" value="${esc(v(it.id, "dx"))}">
+        </div>`).join("")}
+    </div>`;
+}
+// items whose left/right gap is over 10%
+function asymmetric(tests) {
+  return (S.plan.tests?.items || []).filter(it => {
+    const a = parseNum(tests?.[it.id]?.sx), b = parseNum(tests?.[it.id]?.dx);
+    return a != null && b != null && Math.max(a, b) > 0 && Math.abs(a - b) / Math.max(a, b) > 0.1;
+  }).map(it => it.name);
+}
 function sheetCheckin(sh) {
   const c = sh.data, w = Math.max(1, week());
   return sheetWrap(`Check-in settimana ${w}`, `
@@ -710,6 +757,7 @@ function sheetCheckin(sh) {
       <span class="field-label">Caviglia a fine settimana (0-10)</span>${scale("ci-ankle", c.ankle, 0, 10)}
       <span class="field-label">Note</span><textarea class="field" data-bind="ci-note" placeholder="Cosa è andato bene, cosa no">${esc(c.note)}</textarea>
     </div>
+    ${testsBlock(c, w)}
     <div style="margin-top:16px"><button class="btn" data-act="save-checkin">Salva check-in</button></div>`,
     { left: `<button class="txt-btn" data-act="close-sheet">Annulla</button>`, right: "" });
 }
@@ -729,13 +777,18 @@ function sheetSession(sh) {
 function sheetExercise(sh) {
   const e = findExercise(S.plan, sh.id);
   if (!e) return "";
-  const hist = gymSessions().map(s => ({ s, x: s.exercises.find(y => y.id === e.id) })).filter(h => h.x && h.x.sets.some(y => y.done));
+  const ids = [e.id, ...(e.aliases || [])];
+  const hist = gymSessions().map(s => ({ s, x: s.exercises.find(y => ids.includes(y.id)) })).filter(h => h.x && h.x.sets.some(y => y.done));
+  const hm = e.home ? { ...e, ...e.home } : null;
   return sheetWrap(e.name, `<div class="sheet-title">${esc(e.name)}</div>
     <div class="subhead" style="text-transform:none;margin-bottom:12px">${e.sets} × ${e.reps} ${unitLong(e.measure || "reps")}${e.perSide ? " per lato" : ""} · recupero ${fmtSec(e.rest || 90)}</div>
     ${e.note ? `<p class="foot" style="margin:0 4px 12px">${esc(e.note)}</p>` : ""}
     <div class="section-h">Come si fa</div><div class="group" style="padding-top:12px">${howBlock(e.how)}</div>
+    <div class="section-h">A casa</div>
+    <div class="card"><div class="row-title">${esc(hm && hm.name !== e.name ? hm.name : "Uguale")}</div><div class="setline">${hm ? `${hm.sets} × ${hm.reps} ${unitLong(hm.measure || "reps")}${hm.perSide ? " per lato" : ""}` : ""}${hm && hm.note ? (hm ? " · " : "") + esc(hm.note) : ""}</div></div>
+    ${hm && e.home.how ? `<div class="group" style="padding-top:12px;margin-top:8px">${howBlock(e.home.how)}</div>` : ""}
     <div class="section-h">Storico</div>
-    ${hist.length ? `<div class="group">${hist.map(h => `<div class="row"><div class="grow"><div class="row-title">${fmtDate(h.s.date)}</div><div class="setline">${h.x.sets.filter(y => y.done).map(y => (h.x.load || e.load) === "none" ? fmtN(y.reps) : fmtN(y.kg) + "×" + fmtN(y.reps)).join(" · ")}${h.x.feel ? " · " + feelLbl[h.x.feel] : ""}</div></div></div>`).join("")}</div>` : `<div class="empty">Mai fatto.</div>`}`);
+    ${hist.length ? `<div class="group">${hist.map(h => `<div class="row"><div class="grow"><div class="row-title">${fmtDate(h.s.date)}</div><div class="setline">${h.x.mode === "home" ? "a casa · " : ""}${h.x.sets.filter(y => y.done).map(y => (h.x.load || e.load) === "none" ? fmtN(y.reps) : fmtN(y.kg) + "×" + fmtN(y.reps)).join(" · ")}${h.x.feel ? " · " + feelLbl[h.x.feel] : ""}</div></div></div>`).join("")}</div>` : `<div class="empty">Mai fatto.</div>`}`);
 }
 
 /* ---------- actions ---------- */
@@ -771,6 +824,7 @@ document.addEventListener("click", async ev => {
     case "reload": location.reload(); break;
     case "pick-day": S.pickDay = v; render(true); break;
     case "minimal": S.minimal = t.checked; saveUI(); render(true); break;
+    case "home": S.home = t.checked; saveUI(); render(true); break;
     case "start": startWorkout(v); break;
     case "resume": resumeWorkout(); break;
     case "step": stepValue(ei, i, t.dataset.f, +t.dataset.d); break;
@@ -828,7 +882,9 @@ document.addEventListener("click", async ev => {
       if (c.sleep == null || c.energy == null || c.ankle == null) { toast("Compila sonno, energia e caviglia"); break; }
       const k = "w" + String(w).padStart(2, "0");
       await store.save(`checkins/${k}.json`, { ...c, week: w, date: todayISO() }, { delay: 0 });
-      S.sheet = null; await loadData(); render(true); toast("Check-in salvato"); break;
+      const asym = asymmetric(c.tests);
+      S.sheet = null; await loadData(); render(true);
+      toast(asym.length ? `Differenza sopra il 10%: ${asym.join(", ")}. Segnalalo al fisioterapista` : "Check-in salvato"); break;
     }
     case "hist-mode": S.histMode = v; saveUI(); render(true); break;
     case "plan-day": S.planDay = v; saveUI(); render(true); break;
@@ -844,6 +900,10 @@ document.addEventListener("input", ev => {
   if (b === "exnote") { curEx().note = val; persistActive(); }
   else if (b === "note") { S.active.note = val; persistActive(); }
   else if (b === "run-note" || b === "ci-note") S.sheet.data.note = val;
+  else if (b.startsWith("test:")) {
+    const [, id, side] = b.split(":"), t = (S.sheet.data.tests ||= {});
+    (t[id] ||= {})[side] = parseNum(val);
+  }
 });
 document.addEventListener("keydown", ev => {
   if (ev.key === "Enter" && ev.target.id === "num-in") { ev.preventDefault(); commitNum(); }

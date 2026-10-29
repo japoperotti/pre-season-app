@@ -7,41 +7,72 @@ export function weekOf(plan, iso) {
   const s = new Date(plan.startDate + "T00:00:00"), d = new Date(iso + "T00:00:00");
   return Math.floor((d - s) / (7 * 864e5)) + 1;
 }
+// Before the start date the program shows week 1.
+export const effWeek = w => Math.max(1, w);
 export function phaseFor(plan, w) {
   return (plan.phases || []).find(p => w >= p.from && w <= p.to) || null;
 }
+// "4-5", "7-99", "7-" (open), "3"
 const inRange = (range, w) => {
-  const [a, b] = String(range).split("-").map(Number);
-  return w >= a && w <= (b || a);
+  const [a, b] = String(range).split("-");
+  return w >= +a && w <= (b === undefined ? +a : b === "" ? Infinity : +b);
 };
 
-// Exercise as prescribed this week: week variants, phase set factor, and the day's place.
-function resolve(ex, w, phase, block) {
+export function availableDays(plan, w) {
+  return Object.keys(plan.days || {}).sort().filter(d => !plan.days[d].weeks || inRange(plan.days[d].weeks, effWeek(w)));
+}
+export const mainDays = (plan, w) => availableDays(plan, w).filter(d => !plan.days[d].optional);
+
+function allDefs(plan) {
+  return [...(plan.warmup || []), ...Object.values(plan.days || {}).flatMap(d => d.exercises || []), ...(plan.ankle || [])].filter(e => e.id);
+}
+export function findExercise(plan, id) {
+  return allDefs(plan).find(x => x.id === id) || null;
+}
+// Unique exercises of the program (warm-up excluded), for lists and history.
+export function programExercises(plan) {
+  const seen = new Set();
+  return [...Object.values(plan.days || {}).flatMap(d => d.exercises || []), ...(plan.ankle || [])]
+    .map(e => e.ref ? findExercise(plan, e.ref) : e).filter(e => e && !seen.has(e.id) && seen.add(e.id));
+}
+
+// Exercise as prescribed this week: week variants, phase set factor, home version.
+function resolve(plan, raw, w, phase, block, home) {
+  let ex = raw;
+  if (raw.ref) {
+    const base = findExercise(plan, raw.ref);
+    if (!base) return null;
+    const { ref, ...patch } = raw;
+    ex = { ...base, ...patch, weeks: {}, onlyWeeks: undefined };
+  }
   if (ex.onlyWeeks && !inRange(ex.onlyWeeks, w)) return null;
-  const out = { load: "kg", measure: "reps", step: 2.5, rest: 90, ...ex, block };
+  let out = { load: "kg", measure: "reps", step: 2.5, rest: 90, ...ex, block, mode: "gym" };
   for (const [range, patch] of Object.entries(ex.weeks || {})) if (inRange(range, w)) Object.assign(out, patch);
+  if (home) {
+    const h = ex.home || {};
+    out = { ...out, ...h, how: h.how || out.how, note: h.note ?? out.note, mode: "home", gymName: out.name };
+    for (const [range, patch] of Object.entries(h.weeks || {})) if (inRange(range, w)) Object.assign(out, patch);
+  }
   if (phase && phase.setFactor) out.sets = Math.max(2, Math.round(out.sets * phase.setFactor));
   return out;
 }
-export function dayExercises(plan, day, { week, minimal = false } = {}) {
-  const ph = phaseFor(plan, week);
-  let main = (plan.days?.[day]?.exercises || []).map(e => resolve(e, week, ph, "main")).filter(Boolean);
+export function dayExercises(plan, day, { week, minimal = false, home = false } = {}) {
+  const w = effWeek(week), ph = phaseFor(plan, w), d = plan.days?.[day] || {};
+  const map = (list, block) => (list || []).map(e => resolve(plan, e, w, ph, block, home)).filter(Boolean);
+  let main = map(d.exercises, "main");
   if (minimal) main = main.slice(0, 3);
-  const ankle = (plan.ankle || []).map(e => resolve(e, week, ph, "ankle")).filter(Boolean);
-  return main.concat(ankle);
-}
-export function findExercise(plan, id) {
-  for (const d of Object.values(plan.days || {})) { const e = (d.exercises || []).find(x => x.id === id); if (e) return e; }
-  return (plan.ankle || []).find(x => x.id === id) || null;
+  return [...(d.warmup ? map(plan.warmup, "warmup") : []), ...main, ...(d.ankle ? map(plan.ankle, "ankle") : [])];
 }
 
 /* ---------- history ---------- */
 // sessions: newest first, completed only. `before`: only sessions that came earlier than it.
+// ids: the exercise id plus its aliases from the previous program. mode: "gym" or "home".
 const earlier = (s, b) => s.id !== b.id && (s.date < b.date || (s.date === b.date && (s.endedAt || "") < (b.endedAt || "~")));
-export function lastPerformance(sessions, exId, before) {
+export function lastPerformance(sessions, ids, before, mode = "gym") {
+  ids = [].concat(ids);
   for (const s of sessions) {
     if (s.type !== "gym" || (before && !earlier(s, before))) continue;
-    const e = (s.exercises || []).find(x => x.id === exId);
+    const e = (s.exercises || []).find(x => ids.includes(x.id) && (x.mode || "gym") === mode);
     if (e && e.sets.some(x => x.done)) return { session: s, ex: e };
   }
   return null;
