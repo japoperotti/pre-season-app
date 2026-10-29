@@ -1,9 +1,10 @@
 // App shell offline: network first (3 s timeout), cache as fallback. GitHub API calls are not touched.
-const CACHE = "preseason-v2.2.1";
+const CACHE = "preseason-v2.2.2";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "store.js", "plan.js", "manifest.webmanifest", "keepawake.mp4", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: "reload" skips the browser HTTP cache (GitHub Pages sends max-age=600)
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -15,7 +16,7 @@ self.addEventListener("fetch", e => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const res = await Promise.race([fetch(req), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))]);
+      const res = await Promise.race([fetch(req, { cache: "no-cache" }), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))]);
       if (res.ok) cache.put(req, res.clone());
       return res;
     } catch (err) {

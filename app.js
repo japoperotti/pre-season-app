@@ -1,7 +1,7 @@
 import * as store from "./store.js";
 import { todayISO, weekOf, effWeek, phaseFor, availableDays, mainDays, dayExercises, findExercise, programExercises, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
 
-const VERSION = "2.2.1";
+const VERSION = "2.2.2";
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -284,7 +284,7 @@ function syncLine() {
   else if (st.state === "offline" || !navigator.onLine) { cls = "warn"; txt = "Offline" + (st.pending ? ` · ${st.pending} da inviare` : ""); }
   else if (st.pending) { cls = "warn"; txt = `${st.pending} da inviare`; }
   else { cls = "ok"; txt = st.lastSync ? "Sincronizzato " + ago(st.lastSync) : "Sincronizzato"; }
-  return `<button class="sync-line" data-act="sync" style="width:100%"><span class="s-dot ${cls}"></span>${esc(txt)}</button>`;
+  return `<button class="sync-line" data-act="sync" style="width:100%"><span class="s-dot ${cls}"></span>${esc(txt)} · v${VERSION}</button>`;
 }
 
 /* ---------- start / resume ---------- */
@@ -1009,5 +1009,12 @@ store.onStatus(() => {
   render(true);
   const changed = await store.sync();
   if (changed.length) { await loadData(); render(); }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
+    // a new version took over: reload, unless a workout is on screen
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController && !(S.active && S.view !== "tabs")) location.reload();
+    });
+  }
 })();
