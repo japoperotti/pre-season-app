@@ -1,7 +1,7 @@
 import * as store from "./store.js";
 import { todayISO, weekOf, effWeek, phaseFor, availableDays, mainDays, dayExercises, findExercise, programExercises, lastPerformance, topKg, suggestion, buildSets } from "./plan.js";
 
-const VERSION = "2.2.0";
+const VERSION = "2.2.1";
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -198,7 +198,8 @@ function estMinutes(list) {
   return Math.round(list.reduce((a, e) => a + e.sets * ((e.measure === "sec" ? e.reps * (e.perSide ? 2 : 1) : 40) + e.rest), 0) / 60 / 5) * 5;
 }
 const currentDay = () => S.pickDay && days().includes(S.pickDay) ? S.pickDay : nextDay();
-const weekSessions = w => S.sessions.filter(s => inProgram(s) && progWeek(s) === w);
+// by calendar week of the program, so the days before the start count as week 0
+const weekSessions = w => S.sessions.filter(s => progWeek(s) === w);
 // consecutive program weeks with every planned session done (the current one counts once done)
 function weekStreak() {
   const w = effWeek(week());
@@ -210,7 +211,7 @@ function weekStreak() {
 function viewOggi() {
   const p = S.plan, w = week(), ew = effWeek(w), tot = p.totalWeeks || 6, ph = phaseFor(p, ew);
   const ds = days(), md = mainDays(p, w), day = currentDay();
-  const wkS = weekSessions(ew);
+  const wkS = weekSessions(w);
   const gym = wkS.filter(s => s.type === "gym" && md.includes(s.day)).length, run = wkS.filter(s => s.type === "run").length;
   const optDays = ds.filter(d => p.days[d].optional), opt = wkS.filter(s => s.type === "gym" && optDays.includes(s.day)).length;
   const pains = wkS.map(s => s.ankle).filter(v => v != null);
@@ -629,10 +630,10 @@ function viewStorico() {
     if (!S.sessions.length) body = `<div class="empty">Nessun allenamento ancora.</div>`;
     const byWeek = {};
     // sessions before the program start belong to the September program
-    S.sessions.forEach(s => { const w = inProgram(s) ? progWeek(s) : 0; (byWeek[w] ||= []).push(s); });
+    S.sessions.forEach(s => { const w = Math.max(0, progWeek(s)); (byWeek[w] ||= []).push(s); });
     body += Object.keys(byWeek).map(Number).sort((a, b) => b - a).map(w => {
       const ph = phaseFor(p, w);
-      return `<div class="section-h">${w === 0 ? "Scheda di settembre" : `Settimana ${w}${ph ? " · " + esc(ph.name) : ""}`}</div><div class="group">${byWeek[w].map(s => {
+      return `<div class="section-h">${w === 0 ? "Prima del " + fmtDate(p.startDate) : `Settimana ${w}${ph ? " · " + esc(ph.name) : ""}`}</div><div class="group">${byWeek[w].map(s => {
         const isRun = s.type === "run", st = isRun ? null : sessionStats(s);
         const sub = isRun ? `${s.minutes ?? "–"} min · ${esc(s.kind || "")}` : s.exercises.length ? `${st.sets} serie${st.min ? " · " + st.min + " min" : ""}${s.rpe ? " · RPE " + s.rpe : ""}` : "Dati non salvati dalla vecchia app";
         return `<button class="row with-badge" data-act="open-session" data-v="${esc(s.id)}"><span class="badge d-${isRun ? "R" : esc(s.day)}">${isRun ? icon("run") : esc(s.day)}</span><div class="grow"><div class="row-title">${isRun ? "Corsa" : esc(s.dayTitle || "Giorno " + s.day)}</div><div class="row-sub">${fmtDate(s.date)} · ${sub}</div></div><span class="chev">${icon("chevR")}</span></button>`;
@@ -692,11 +693,15 @@ function sheetWrap(title, body, { left = "", right = `<button class="txt-btn bol
 function renderSheet() {
   const root = $("#sheet-root"), sh = S.sheet;
   document.body.classList.toggle("lock", !!sh || !!(S.active && S.view === "workout" && (S.rest || S.work)));
-  if (!sh) { root.innerHTML = ""; return; }
+  if (!sh) { root.innerHTML = ""; root.dataset.type = ""; return; }
   const a = document.activeElement;
   if (sh.type === "settings" && a && a.tagName === "INPUT" && root.contains(a)) return;
   const fn = { num: sheetNum, list: sheetList, end: sheetEnd, settings: sheetSettings, run: sheetRun, checkin: sheetCheckin, session: sheetSession, exercise: sheetExercise }[sh.type];
+  // same sheet re-rendered after a tap: no slide-in again, keep the scroll position
+  const prev = root.dataset.type === sh.type ? root.querySelector(".sheet") : null, top = prev ? prev.scrollTop : 0;
   root.innerHTML = fn ? fn(sh) : "";
+  root.dataset.type = sh.type;
+  if (prev) root.querySelectorAll(".sheet,.scrim").forEach(el => { el.classList.add("static"); if (el.classList.contains("sheet")) el.scrollTop = top; });
   if (sh.type === "num") { const inp = $("#num-in"); inp && (inp.focus(), inp.select()); }
 }
 function sheetNum(sh) {

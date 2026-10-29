@@ -314,6 +314,7 @@ input.field:focus, textarea.field:focus { box-shadow: 0 0 0 2px var(--blue) inse
 .sheet-nav h3 { margin: 0; font-size: 17px; font-weight: 600; text-align: center; }
 .sheet-nav .r { justify-self: end; } .sheet-nav .l { justify-self: start; }
 .sheet .sheet-title { font-size: 28px; line-height: 34px; font-weight: 700; margin: 4px 4px 4px; letter-spacing: .36px; }
+.sheet.static, .scrim.static { animation: none; }
 @keyframes up { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet, .scrim { animation: none; } .ring .fg { transition: none; } }
